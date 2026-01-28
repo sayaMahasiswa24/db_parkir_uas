@@ -1,76 +1,110 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from datetime import datetime
 import mysql.connector
-import random
-import string
 
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="",
-    database="db_parkir_uas"
-)
-cursor = db.cursor()
+def get_db_connection():
+    return mysql.connector.connect(
+        host="localhost",
+        user="root",      
+        password="",      
+        database="sistem_parkir"
+    )
 
+def parkir_masuk():
+    plat = entry_plat.get()
+    jenis = combo_jenis.get()
+    waktu_masuk = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def generate_ticket():
-    random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
-    return f"TKT-{random_code}"
+    if plat == "" or jenis == "":
+        messagebox.showwarning("Input Error", "Isi plat dan jenis kendaraan!")
+        return
 
-
-def check_in(id_kategori):
-    id_tiket = generate_ticket()
-    sql = "INSERT INTO Transaksi (id_tiket, id_kategori, waktu_masuk) VALUES (%s, %s, NOW())"
-    val = (id_tiket, id_kategori)
-    
-    cursor.execute(sql, val)
-    db.commit()
-    print(f"--- KENDARAAN MASUK ---")
-    print(f"ID Tiket : {id_tiket}")
-    print(f"Kategori : {id_kategori} (1: Motor, 2: Mobil)")
-
-
-def tampilkan_parkir():
-    cursor.execute("SELECT id_tiket, waktu_masuk FROM Transaksi WHERE waktu_keluar IS NULL")
-    hasil = cursor.fetchall()
-    print("\n--- DAFTAR KENDARAAN DI LOKASI ---")
-    for row in hasil:
-        print(f"Tiket: {row[0]} | Masuk: {row[1]}")
-
-def check_out(id_tiket):
-
-    query_info = """
-    SELECT t.waktu_masuk, k.tarif_per_jam 
-    FROM Transaksi t 
-    JOIN Kategori k ON t.id_kategori = k.id_kategori 
-    WHERE t.id_tiket = %s
-    """
-    cursor.execute(query_info, (id_tiket,))
-    data = cursor.fetchone()
-
-    if data:
-        waktu_masuk, tarif = data
-        
-
-        sql_update = """
-        UPDATE Transaksi t
-        JOIN Kategori k ON t.id_kategori = k.id_kategori
-        SET t.waktu_keluar = NOW(),
-            t.total_biaya = GREATEST(k.tarif_per_jam, CEIL(TIMESTAMPDIFF(SECOND, t.waktu_masuk, NOW()) / 3600) * k.tarif_per_jam)
-        WHERE t.id_tiket = %s
-        """
-        cursor.execute(sql_update, (id_tiket,))
+    try:
+        db = get_db_connection()
+        cursor = db.cursor()
+        sql = "INSERT INTO riwayat_parkir (plat_nomor, jenis_kendaraan, waktu_masuk) VALUES (%s, %s, %s)"
+        cursor.execute(sql, (plat, jenis, waktu_masuk))
         db.commit()
+        db.close()
         
+        tampilkan_data()
+        entry_plat.delete(0, tk.END)
+    except Exception as e:
+        messagebox.showerror("Error", f"Gagal simpan data: {e}")
 
-        cursor.execute("SELECT total_biaya FROM Transaksi WHERE id_tiket = %s", (id_tiket,))
-        biaya = cursor.fetchone()[0]
+def parkir_keluar():
+    selected = tabel.focus()
+    if not selected:
+        messagebox.showwarning("Pilih Data", "Pilih kendaraan yang akan keluar!")
+        return
+
+
+    item = tabel.item(selected)
+    record_id = item['values'][0]
+    waktu_keluar = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+
+    tarif = 5000 
+
+    try:
+        db = get_db_connection()
+        cursor = db.cursor()
+        sql = "UPDATE riwayat_parkir SET waktu_keluar = %s, tarif = %s WHERE id = %s"
+        cursor.execute(sql, (waktu_keluar, tarif, record_id))
+        db.commit()
+        db.close()
         
-        print(f"--- KENDARAAN KELUAR ---")
-        print(f"ID Tiket    : {id_tiket}")
-        print(f"Total Biaya : Rp {biaya}")
-    else:
-        print("ID Tiket tidak ditemukan!")
+        tampilkan_data()
+    except Exception as e:
+        messagebox.showerror("Error", f"Gagal update data: {e}")
+
+def tampilkan_data():
+    for row in tabel.get_children():
+        tabel.delete(row)
+
+    try:
+        db = get_db_connection()
+        cursor = db.cursor()
+        cursor.execute("SELECT * FROM riwayat_parkir ORDER BY id DESC")
+        res = cursor.fetchall()
+        
+        for row in res:
+            tabel.insert("", "end", values=row)
+        db.close()
+    except Exception as e:
+        print(f"Error loading data: {e}")
 
 
-check_in(2) 
-tampilkan_parkir()
-check_out('TKT-8U03E')
+root = tk.Tk()
+root.title("Sistem Parkir MariaDB")
+root.geometry("700x450")
+
+frame = tk.Frame(root)
+frame.pack(pady=10)
+
+tk.Label(frame, text="Plat Nomor").grid(row=0, column=0)
+entry_plat = tk.Entry(frame)
+entry_plat.grid(row=0, column=1)
+
+tk.Label(frame, text="Jenis Kendaraan").grid(row=1, column=0)
+combo_jenis = ttk.Combobox(frame, values=["Motor", "Mobil"])
+combo_jenis.grid(row=1, column=1)
+
+tk.Button(frame, text="Parkir Masuk", command=parkir_masuk).grid(row=2, column=0, columnspan=2, pady=5)
+
+kolom = ("ID", "Plat", "Jenis", "Masuk", "Keluar", "Tarif")
+tabel = ttk.Treeview(root, columns=kolom, show="headings")
+
+for k in kolom:
+    tabel.heading(k, text=k)
+    tabel.column(k, width=100)
+
+tabel.pack(pady=10)
+
+tk.Button(root, text="Parkir Keluar (Selesai)", command=parkir_keluar).pack(pady=5)
+
+
+tampilkan_data()
+
+root.mainloop()
